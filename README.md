@@ -1,6 +1,8 @@
 # PDF Chatbot Backend
 
-This is the Express.js backend for a scalable PDF chat application. It uses LangChain for document processing and Qdrant for vector storage. The backend supports PDF upload, chunking, embedding, retrieval, and streaming chat responses.
+This is the Express.js backend for a scalable PDF chat RAG application. It uses LangChain for document processing and Qdrant for vector storage. The backend supports PDF upload, chunking, embedding, retrieval, and streaming chat responses.
+
+**Frontend repo:** [pdf-chatbot-frontend](https://github.com/bablukpik/pdf-chatbot-frontend)
 
 ## Features
 
