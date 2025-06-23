@@ -7,6 +7,8 @@ import { OpenAIEmbeddings } from '@langchain/openai';
 import { QdrantVectorStore } from '@langchain/qdrant';
 import OpenAI from 'openai';
 
+const PORT = process.env.PORT || 8000;
+
 // Ensure required environment variables are set
 if (!process.env.OPENAI_API_KEY) {
   throw new Error('Missing OPENAI_API_KEY in .env file');
@@ -61,40 +63,67 @@ app.get('/chat', async (req, res) => {
     return res.status(400).json({ message: 'Missing message in query params' });
   }
 
-  const embeddings = new OpenAIEmbeddings({
-    model: 'text-embedding-3-small',
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-  const vectorStore = await QdrantVectorStore.fromExistingCollection(
-    embeddings,
-    {
-      url: process.env.QDRANT_URL,
-      collectionName: process.env.QDRANT_COLLECTION_NAME,
-    },
-  );
-  const retriever = vectorStore.asRetriever({
-    k: 2,
-  });
-  const retrievedDocs = await retriever.invoke(userQuery);
+  // Set headers for streaming
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
 
-  const SYSTEM_PROMPT = `
-  You are a helpful AI Assistant who answers the user query based on the available context from PDF File.
-  Context:
-  ${JSON.stringify(retrievedDocs)}
-  `;
+  try {
+    const embeddings = new OpenAIEmbeddings({
+      model: 'text-embedding-3-small',
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+    const vectorStore = await QdrantVectorStore.fromExistingCollection(
+      embeddings,
+      {
+        url: process.env.QDRANT_URL,
+        collectionName: process.env.QDRANT_COLLECTION_NAME,
+      },
+    );
+    const retriever = vectorStore.asRetriever({
+      k: 2,
+    });
+    const retrievedDocs = await retriever.invoke(userQuery);
 
-  const chatResult = await openAIClient.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: userQuery },
-    ],
-  });
+    const SYSTEM_PROMPT = `
+    You are a helpful AI Assistant who answers the user query based on the available context from PDF File.
+    Context:
+    ${JSON.stringify(retrievedDocs)}
+    `;
 
-  return res.json({
-    message: chatResult.choices[0].message.content,
-    docs: retrievedDocs,
-  });
+    // Send retrieved documents first
+    res.write(`data: ${JSON.stringify({ documents: retrievedDocs })}\n\n`);
+
+    const chatResult = await openAIClient.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userQuery },
+      ],
+      stream: true,
+    });
+
+    // return res.json({
+    //   message: chatResult.choices[0].message.content,
+    //   docs: retrievedDocs,
+    // });
+
+    for await (const chunk of chatResult) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) {
+        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+      }
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (error) {
+    console.error('Chat error:', error);
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
 });
 
-app.listen(8000, () => console.log(`Server started on PORT:${8000}`));
+app.listen(PORT, () => console.log(`Server started on PORT:${PORT}`));
