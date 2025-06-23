@@ -7,6 +7,8 @@ import { OpenAIEmbeddings } from '@langchain/openai';
 import { QdrantVectorStore } from '@langchain/qdrant';
 import OpenAI from 'openai';
 
+const PORT = process.env.PORT || 8000;
+
 // Ensure required environment variables are set
 if (!process.env.OPENAI_API_KEY) {
   throw new Error('Missing OPENAI_API_KEY in .env file');
@@ -124,4 +126,4 @@ app.get('/chat', async (req, res) => {
   }
 });
 
-app.listen(8000, () => console.log(`Server started on PORT:${8000}`));
+app.listen(PORT, () => console.log(`Server started on PORT:${PORT}`));
