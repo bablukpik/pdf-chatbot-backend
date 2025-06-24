@@ -59,22 +59,29 @@ app.post('/upload/pdf', upload.single('pdf'), async (req, res) => {
 app.get('/chat', async (req, res) => {
   const userQuery = req.query.message;
 
-  if (!userQuery) {
+  if (!userQuery || typeof userQuery !== 'string') {
     return res.status(400).json({ message: 'Missing message in query params' });
   }
 
-  // Set headers for streaming
+  // Set headers for SSE or streaming
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
+
+  let clientDisconnected = false;
+
+  req.on('close', () => {
+    console.log('Client disconnected');
+    clientDisconnected = true;
+  });
 
   try {
     const embeddings = new OpenAIEmbeddings({
       model: 'text-embedding-3-small',
       apiKey: process.env.OPENAI_API_KEY,
     });
+
     const vectorStore = await QdrantVectorStore.fromExistingCollection(
       embeddings,
       {
@@ -82,19 +89,20 @@ app.get('/chat', async (req, res) => {
         collectionName: process.env.QDRANT_COLLECTION_NAME,
       },
     );
-    const retriever = vectorStore.asRetriever({
-      k: 2,
-    });
+
+    const retriever = vectorStore.asRetriever({ k: 2 });
     const retrievedDocs = await retriever.invoke(userQuery);
 
-    const SYSTEM_PROMPT = `
-    You are a helpful AI Assistant who answers the user query based on the available context from PDF File.
-    Context:
-    ${JSON.stringify(retrievedDocs)}
-    `;
+    // Send retrieved documents (optional)
+    res.write(
+      `data: ${JSON.stringify({ type: 'docs', documents: retrievedDocs })}\n\n`,
+    );
 
-    // Send retrieved documents first
-    res.write(`data: ${JSON.stringify({ documents: retrievedDocs })}\n\n`);
+    const SYSTEM_PROMPT = `
+You are a helpful AI Assistant who answers the user query based on the available context from PDF File.
+Context:
+${JSON.stringify(retrievedDocs)}
+    `;
 
     const chatResult = await openAIClient.chat.completions.create({
       model: 'gpt-4o',
@@ -105,24 +113,37 @@ app.get('/chat', async (req, res) => {
       stream: true,
     });
 
+    // Send llm response at once without streaming
     // return res.json({
     //   message: chatResult.choices[0].message.content,
     //   docs: retrievedDocs,
     // });
 
+    // Send llm response chunk by chunk
     for await (const chunk of chatResult) {
+      if (clientDisconnected) break;
+
       const content = chunk.choices[0]?.delta?.content;
       if (content) {
-        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'stream', content })}\n\n`);
       }
     }
 
-    res.write('data: [DONE]\n\n');
-    res.end();
+    if (!clientDisconnected) {
+      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+      res.end();
+    }
   } catch (error) {
     console.error('Chat error:', error);
-    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
-    res.end();
+    if (!clientDisconnected) {
+      res.write(
+        `data: ${JSON.stringify({
+          type: 'error',
+          error: error.message || 'Unknown error',
+        })}\n\n`,
+      );
+      res.end();
+    }
   }
 });
 
