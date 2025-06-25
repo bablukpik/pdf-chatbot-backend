@@ -6,11 +6,37 @@ This is the Express.js backend for a scalable PDF chat RAG application. It uses 
 
 ## Features
 
-- Upload PDF files
+- AI-powered chat with PDF documents
 - Chunk and embed documents using LangChain
-- Store and retrieve embeddings with Qdrant
-- Streaming chat responses (SSE)
+- Store and retrieve embeddings with Qdrant vector database
+- Real-time streaming responses (SSE)
 - Queue-based processing with BullMQ
+- Rate limiting and input validation
+- Conversation history support
+- Request cancellation support
+
+## Tech Stack
+
+- Node.js with Express
+- LangChain for RAG
+- OpenAI API
+- Qdrant Vector Database
+- Rate limiting with express-rate-limit
+- SSE
+- BullMQ
+
+## Security Features
+
+- Rate limiting (50 requests per 15 minutes)
+- Input validation and sanitization
+- CORS protection
+- Request timeout handling
+
+## RAG Implementation
+
+- Uses OpenAI embeddings for document retrieval
+- Qdrant vector database for similarity search
+- Context-aware responses with source citations
 
 ## Setup
 
@@ -57,10 +83,28 @@ Upload a PDF file. The file will be processed and added to the vector store asyn
 
 ### `POST /chat`
 
-Chat with your PDF using streaming responses (SSE).
+Chat with PDF documents using RAG.
 
-- **Body:** `{ messages: [{ role: 'user', content: 'your question' }, ...] }`
-- **Response:** Server-Sent Events (SSE) streaming the AI's response and source documents
+**Request Body:**
+
+```json
+{
+  "message": "Your question here",
+  "conversationHistory": [
+    {
+      "role": "user",
+      "content": "Previous message"
+    }
+  ]
+}
+```
+
+**Response:** Server-Sent Events (SSE) stream with:
+
+- `type: "docs"` - Retrieved documents
+- `type: "stream"` - Streaming response content
+- `type: "done"` - Completion signal
+- `type: "error"` - Error information
 
 ## Streaming Chat Usage
 
