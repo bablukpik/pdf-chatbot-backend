@@ -30,6 +30,46 @@ const openAIClient = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// OpenRouter client for multiple models
+const openRouterClient = new OpenAI({
+  baseURL: 'https://openrouter.ai/api/v1',
+  apiKey: process.env.OPENROUTER_API_KEY,
+  defaultHeaders: {
+    'HTTP-Referer': process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000',
+    'X-Title': 'PDF Chat Assistant',
+  },
+});
+
+// Available models configuration
+const AVAILABLE_MODELS = {
+  'gpt-4o': {
+    name: 'GPT-4o',
+    provider: 'openai',
+    cost: 'paid',
+    description: 'Most capable model',
+  },
+  'deepseek/deepseek-r1-0528:free': {
+    name: 'DeepSeek R1',
+    provider: 'deepseek',
+    cost: 'free',
+    description: 'DeepSeek R1 Reasoning Model',
+  },
+  'anthropic/claude-3.5-sonnet': {
+    name: 'Claude 3.5 Sonnet',
+    provider: 'anthropic',
+    cost: 'paid',
+    description: 'Fast and capable',
+  },
+  'meta-llama/llama-3.1-8b-instruct:free': {
+    name: 'Llama 3.1 8B',
+    provider: 'meta',
+    cost: 'free',
+    description: 'Llama model',
+  },
+};
+
+const DEFAULT_MODEL = 'deepseek/deepseek-r1-0528:free';
+
 const fileUploadQueue = new Queue('file-upload-queue', {
   connection: {
     host: process.env.REDIS_HOST || 'localhost',
@@ -161,9 +201,9 @@ app.get('/chat', chatRateLimit, async (req, res) => {
   }
 });
 
-// New version of chat endpoint
+// Update the chat endpoint to accept model parameter
 app.post('/chat', chatRateLimit, async (req, res) => {
-  const { message, conversationHistory = [] } = req.body;
+  const { message, conversationHistory = [], model = DEFAULT_MODEL } = req.body;
 
   // Input validation
   if (!message || typeof message !== 'string' || message.trim().length === 0) {
@@ -181,6 +221,14 @@ app.post('/chat', chatRateLimit, async (req, res) => {
   if (!Array.isArray(conversationHistory) || conversationHistory.length > 20) {
     return res.status(400).json({
       error: 'Invalid conversation history. Maximum 20 messages allowed.',
+    });
+  }
+
+  // Validate model selection
+  if (!AVAILABLE_MODELS[model]) {
+    return res.status(400).json({
+      error: 'Invalid model selection',
+      availableModels: Object.keys(AVAILABLE_MODELS),
     });
   }
 
@@ -218,7 +266,12 @@ app.post('/chat', chatRateLimit, async (req, res) => {
     // Sanitize user input
     const sanitizedMessage = message.trim().substring(0, 4000);
 
-    console.log(`Processing query: ${sanitizedMessage.substring(0, 30)}...`);
+    console.log(
+      `Processing query with model ${model}: ${sanitizedMessage.substring(
+        0,
+        30,
+      )}...`,
+    );
 
     // RAG Logic with error handling
     let retrievedDocs = [];
@@ -236,15 +289,15 @@ app.post('/chat', chatRateLimit, async (req, res) => {
         },
       );
 
+      // Vector retriever
       const retriever = vectorStore.asRetriever({
-        k: 3, // Increased for better context
+        k: 5, // Retrieve the top 5 most relevant document chunks
         searchType: 'similarity',
         searchKwargs: {
-          scoreThreshold: 0.7, // Only include relevant results
+          scoreThreshold: 0.7, // At least 70% similar and filter out irrelevant chunks
         },
       });
 
-      // Retrieve relevant documents from the Vector DB by user query
       retrievedDocs = await retriever.invoke(sanitizedMessage);
 
       // Log retrieval success
@@ -287,11 +340,23 @@ app.post('/chat', chatRateLimit, async (req, res) => {
       );
     }
 
-    const chatResult = await openAIClient.chat.completions.create({
-      model: 'gpt-4o',
+    // Send model info
+    res.write(
+      `data: ${JSON.stringify({
+        type: 'model_info',
+        model,
+        modelName: AVAILABLE_MODELS[model].name,
+        provider: AVAILABLE_MODELS[model].provider,
+        cost: AVAILABLE_MODELS[model].cost,
+      })}\n\n`,
+    );
+
+    // Use OpenRouter for dynamic model selection
+    const chatResult = await openRouterClient.chat.completions.create({
+      model,
       messages,
       stream: true,
-      max_completion_tokens: 1000,
+      max_tokens: 1000,
       temperature: 0.7,
     });
 
@@ -318,6 +383,7 @@ app.post('/chat', chatRateLimit, async (req, res) => {
         `data: ${JSON.stringify({
           type: 'done',
           metadata: {
+            model: model,
             documentsUsed: retrievedDocs.length,
             responseLength: fullResponse.length,
           },
@@ -340,6 +406,14 @@ app.post('/chat', chatRateLimit, async (req, res) => {
   } finally {
     clearTimeout(timeout);
   }
+});
+
+// Add endpoint to get available models
+app.get('/models', (req, res) => {
+  res.json({
+    models: AVAILABLE_MODELS,
+    default: DEFAULT_MODEL,
+  });
 });
 
 // Error handling middleware
