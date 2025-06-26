@@ -19,6 +19,16 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
+  redis-commander:
+    image: rediscommander/redis-commander
+    container_name: redis-commander
+    environment:
+      - REDIS_HOSTS=valkey:valkey:6379
+    ports:
+      - 8081:8081
+    depends_on:
+      - valkey
+
 volumes:
   valkey_data:
   qdrant_data:
