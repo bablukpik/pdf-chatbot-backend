@@ -19,7 +19,7 @@ const chatRateLimit = rateLimit({
 const PORT = process.env.PORT || 8000;
 const CHAT_TIMEOUT_MS = process.env.CHAT_TIMEOUT_MS
   ? parseInt(process.env.CHAT_TIMEOUT_MS)
-  : 60000;
+  : 120000;
 
 // Ensure required environment variables are set
 if (!process.env.OPENAI_API_KEY) {
@@ -46,25 +46,68 @@ const AVAILABLE_MODELS = {
     name: 'GPT-4o',
     provider: 'openai',
     cost: 'paid',
-    description: 'Most capable model',
+    description: 'Most capable model, its context window: 128,000',
   },
   'deepseek/deepseek-r1-0528:free': {
-    name: 'DeepSeek R1',
+    name: 'DeepSeek: R1 0528',
     provider: 'deepseek',
     cost: 'free',
-    description: 'DeepSeek R1 Reasoning Model',
+    description: 'DeepSeek R1 Reasoning Model, its context window: 163,840',
+  },
+  'deepseek/deepseek-v3-base:free': {
+    name: 'DeepSeek: DeepSeek V3 Base',
+    provider: 'deepseek',
+    cost: 'free',
+    description: 'DeepSeek R1 Reasoning Model, its context window: 163,840',
+  },
+  'google/gemini-2.0-flash-exp:free': {
+    name: 'Google: Gemini 2.0 Flash Experimental',
+    provider: 'google',
+    cost: 'free',
+    description:
+      'Google: Gemini 2.0 Flash Experimental Model, its context window: 1,048,576',
   },
   'anthropic/claude-3.5-sonnet': {
     name: 'Claude 3.5 Sonnet',
     provider: 'anthropic',
     cost: 'paid',
-    description: 'Fast and capable',
+    description: 'Fast and capable, its context window: 200,000',
   },
-  'meta-llama/llama-3.1-8b-instruct:free': {
-    name: 'Llama 3.1 8B',
+  'meta-llama/llama-4-maverick:free': {
+    name: 'Meta: Llama 4 Maverick',
     provider: 'meta',
     cost: 'free',
-    description: 'Llama model',
+    description: 'Llama model, its context window: 128,000',
+  },
+  'meta-llama/llama-4-scout:free': {
+    name: 'Meta: Llama 4 Scout',
+    provider: 'meta',
+    cost: 'free',
+    description: 'Llama model, its context window: 96,000',
+  },
+  'meta-llama/llama-3.3-70b-instruct:free': {
+    name: 'Meta: Llama 3.3 70B Instruct',
+    provider: 'meta',
+    cost: 'free',
+    description: 'Llama model, its context window: 131,072',
+  },
+  'meta-llama/llama-3.1-8b-instruct:free': {
+    name: 'Llama 3.1 8B Instruct',
+    provider: 'meta',
+    cost: 'free',
+    description: 'Llama model, its context window: 131,072',
+  },
+  'mistralai/devstral-small:free': {
+    name: 'Mistral: Devstral Small',
+    provider: 'mistral',
+    cost: 'free',
+    description: 'Mistral AI Model, its context window: 131,072',
+  },
+  'mistralai/mistral-small-3.2-24b-instruct:free': {
+    name: 'Mistral: Mistral Small 3.2 24B',
+    provider: 'mistral',
+    cost: 'free',
+    description: 'Mistral AI Model, its context window: 96,000',
   },
 };
 
@@ -308,20 +351,35 @@ app.post('/chat', chatRateLimit, async (req, res) => {
       retrievedDocs = [];
     }
 
-    // Build context-aware system prompt
-    const contextText =
-      retrievedDocs.length > 0
-        ? `Answer the user query based on the following context from PDF documents:\n${retrievedDocs
-            .map((doc) => doc.pageContent)
-            .join('\n\n')}`
-        : 'No specific context available from PDF documents.';
+    // Build a more robust, context-aware system prompt
+    let SYSTEM_PROMPT;
+    if (retrievedDocs.length > 0) {
+      const contextText = retrievedDocs
+        .map((doc) => doc.pageContent)
+        .join('\n\n');
+      SYSTEM_PROMPT = `
+        You are a helpful AI assistant. Use the following context from PDF documents to answer the user's question. 
+        If the answer is not in the context, you may use your own knowledge, but prefer the context when possible.
 
-    const SYSTEM_PROMPT = `You are a helpful AI Assistant. ${contextText}
+        Context:
+        ---
+        ${contextText}
+        ---
 
-    Instructions:
-    - If the context doesn't contain relevant information, clearly state that
-    - Be concise and helpful
-    `;
+        Instructions:
+        - If the context contains the answer, use it and cite the source if possible.
+        - If the context does not contain the answer, answer from your own knowledge.
+        - Be concise and helpful.
+        - Format your answer in markdown.
+      `;
+    } else {
+      SYSTEM_PROMPT = `
+        You are a helpful AI assistant. There is no relevant context from PDF documents for this question.
+        Please answer the user's question using your own knowledge.
+        - Be concise and helpful.
+        - Format your answer in markdown.
+      `;
+    }
 
     // Build conversation messages
     const messages = [

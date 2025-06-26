@@ -301,3 +301,10 @@ Simply context window means LLM's input and output data/token processing capabil
 ## License
 
 MIT
+
+## Contact
+
+If you'd like to discuss this project or collaborate:
+
+- Email: bablukpik@gmail.com
+- LinkedIn: https://www.linkedin.com/in/bablukpik/
