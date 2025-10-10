@@ -19,7 +19,7 @@ const chatRateLimit = rateLimit({
 const PORT = process.env.PORT || 8000;
 const CHAT_TIMEOUT_MS = process.env.CHAT_TIMEOUT_MS
   ? parseInt(process.env.CHAT_TIMEOUT_MS)
-  : 120000;
+  : 120000; // 2 minutes
 
 // Ensure required environment variables are set
 if (!process.env.OPENAI_API_KEY) {
@@ -133,6 +133,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 const app = express();
+
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
@@ -150,98 +151,6 @@ app.post('/upload/pdf', upload.single('pdf'), async (req, res) => {
     path: req.file.path,
   });
   return res.json({ message: 'uploaded' });
-});
-
-// Old version of chat endpoint
-app.get('/chat', chatRateLimit, async (req, res) => {
-  const userQuery = req.query.message;
-
-  if (!userQuery || typeof userQuery !== 'string') {
-    return res.status(400).json({ message: 'Missing message in query params' });
-  }
-
-  // Set headers for SSE or streaming
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-
-  let clientDisconnected = false;
-
-  req.on('close', () => {
-    console.log('Client disconnected');
-    clientDisconnected = true;
-  });
-
-  try {
-    const embeddings = new OpenAIEmbeddings({
-      model: 'text-embedding-3-small',
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-
-    const vectorStore = await QdrantVectorStore.fromExistingCollection(
-      embeddings,
-      {
-        url: process.env.QDRANT_URL,
-        collectionName: process.env.QDRANT_COLLECTION_NAME,
-      },
-    );
-
-    const retriever = vectorStore.asRetriever({ k: 2 });
-    const retrievedDocs = await retriever.invoke(userQuery);
-
-    // Send retrieved documents (optional)
-    // res.write(
-    //   `data: ${JSON.stringify({ type: 'docs', documents: retrievedDocs })}\n\n`,
-    // );
-
-    const SYSTEM_PROMPT = `
-    You are a helpful AI Assistant who answers the user query based on the available context from PDF File.
-    Context:
-    ${JSON.stringify(retrievedDocs)}
-    `;
-
-    const chatResult = await openAIClient.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userQuery },
-      ],
-      stream: true,
-    });
-
-    // Send llm response at once without streaming
-    // return res.json({
-    //   message: chatResult.choices[0].message.content,
-    //   docs: retrievedDocs,
-    // });
-
-    // Send llm response chunk by chunk
-    for await (const chunk of chatResult) {
-      if (clientDisconnected) break;
-
-      const content = chunk.choices[0]?.delta?.content;
-      if (content) {
-        res.write(`data: ${JSON.stringify({ type: 'stream', content })}\n\n`);
-      }
-    }
-
-    if (!clientDisconnected) {
-      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
-      res.end();
-    }
-  } catch (error) {
-    console.error('Chat error:', error);
-    if (!clientDisconnected) {
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'error',
-          error: error.message || 'Unknown error',
-        })}\n\n`,
-      );
-      res.end();
-    }
-  }
 });
 
 // Update the chat endpoint to accept model parameter
@@ -357,6 +266,7 @@ app.post('/chat', chatRateLimit, async (req, res) => {
       const contextText = retrievedDocs
         .map((doc) => doc.pageContent)
         .join('\n\n');
+
       SYSTEM_PROMPT = `
         You are a helpful AI assistant. Use the following context from PDF documents to answer the user's question. 
         If the answer is not in the context, you may use your own knowledge, but prefer the context when possible.
@@ -388,27 +298,6 @@ app.post('/chat', chatRateLimit, async (req, res) => {
       { role: 'user', content: sanitizedMessage },
     ];
 
-    // Send documents info (optional)
-    if (retrievedDocs.length > 0) {
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'docs',
-          documents: retrievedDocs,
-        })}\n\n`,
-      );
-    }
-
-    // Send model info
-    res.write(
-      `data: ${JSON.stringify({
-        type: 'model_info',
-        model,
-        modelName: AVAILABLE_MODELS[model].name,
-        provider: AVAILABLE_MODELS[model].provider,
-        cost: AVAILABLE_MODELS[model].cost,
-      })}\n\n`,
-    );
-
     // Use OpenRouter for dynamic model selection
     const chatResult = await openRouterClient.chat.completions.create({
       model,
@@ -426,6 +315,7 @@ app.post('/chat', chatRateLimit, async (req, res) => {
       const content = chunk.choices[0]?.delta?.content;
       if (content) {
         fullResponse += content;
+        // Stream each chunk to client
         res.write(
           `data: ${JSON.stringify({
             type: 'stream',
@@ -435,32 +325,30 @@ app.post('/chat', chatRateLimit, async (req, res) => {
       }
     }
 
-    if (!clientDisconnected) {
-      // Send completion with metadata
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'done',
-          metadata: {
-            model: model,
-            documentsUsed: retrievedDocs.length,
-            responseLength: fullResponse.length,
-          },
-        })}\n\n`,
-      );
-      res.end();
-    }
+    // Send done event with metadata when complete to client
+    res.write(
+      `data: ${JSON.stringify({
+        type: 'done',
+        metadata: {
+          model: model,
+          documentsUsed: retrievedDocs.length,
+          responseLength: fullResponse.length,
+        },
+      })}\n\n`,
+    );
+
+    // End of response with disconnection from client
+    res.end();
   } catch (error) {
     console.error('Chat error:', error);
-    if (!clientDisconnected) {
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'error',
-          error:
-            'An error occurred while processing your request. Please try again.',
-        })}\n\n`,
-      );
-      res.end();
-    }
+    res.write(
+      `data: ${JSON.stringify({
+        type: 'error',
+        error:
+          'An error occurred while processing your request. Please try again.',
+      })}\n\n`,
+    );
+    res.end();
   } finally {
     clearTimeout(timeout);
   }

@@ -51,7 +51,7 @@ This is the Express.js backend for a scalable PDF chat RAG application. It uses 
    ```
 3. **Start Qdrant and Valkey (Redis alternative):**
    ```sh
-   docker-compose up -d
+   docker compose up
    ```
 4. **Start the backend server:**
    ```sh
