@@ -145,12 +145,25 @@ app.post('/upload/pdf', upload.single('pdf'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'No file uploaded' });
   }
-  await fileUploadQueue.add('process-file', {
-    filename: req.file.originalname,
-    destination: req.file.destination,
-    path: req.file.path,
-  });
-  return res.json({ message: 'uploaded' });
+
+  try {
+    const job = await fileUploadQueue.add('process-file', {
+      filename: req.file.originalname,
+      destination: req.file.destination,
+      path: req.file.path,
+    });
+
+    return res.json({
+      message: 'uploaded',
+      jobId: job.id,
+      status: 'queued',
+    });
+  } catch (error) {
+    console.error('Failed to queue PDF processing job:', error);
+    return res.status(500).json({
+      error: 'Failed to queue processing job',
+    });
+  }
 });
 
 // Update the chat endpoint to accept model parameter
@@ -360,6 +373,53 @@ app.get('/models', (req, res) => {
     models: AVAILABLE_MODELS,
     default: DEFAULT_MODEL,
   });
+});
+
+// Add endpoint to check job status
+app.get('/upload/status/:jobId', async (req, res) => {
+  try {
+    const job = await fileUploadQueue.getJob(req.params.jobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    const state = await job.getState();
+    res.json({
+      id: job.id,
+      status: state,
+      progress: job.progress,
+      filename: job.data.filename,
+      result: job.returnvalue,
+      error: job.failedReason,
+      createdAt: new Date(job.timestamp),
+      processedAt: job.processedOn ? new Date(job.processedOn) : null,
+      finishedAt: job.finishedOn ? new Date(job.finishedOn) : null,
+    });
+  } catch (error) {
+    console.error('Error getting job status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add endpoint to get queue statistics
+app.get('/upload/queue/stats', async (req, res) => {
+  try {
+    const waiting = await fileUploadQueue.getWaiting();
+    const active = await fileUploadQueue.getActive();
+    const completed = await fileUploadQueue.getCompleted();
+    const failed = await fileUploadQueue.getFailed();
+
+    res.json({
+      waiting: waiting.length,
+      active: active.length,
+      completed: completed.length,
+      failed: failed.length,
+      total: waiting.length + active.length + completed.length + failed.length,
+    });
+  } catch (error) {
+    console.error('Error getting queue stats:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Error handling middleware
