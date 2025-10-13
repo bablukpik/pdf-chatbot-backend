@@ -141,3 +141,4 @@ frontend
 .env.production.local
 .env.local
 .vscode
+volumes/

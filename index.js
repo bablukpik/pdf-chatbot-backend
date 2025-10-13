@@ -4,7 +4,7 @@ import cors from 'cors';
 import multer from 'multer';
 import { Queue } from 'bullmq';
 import { OpenAIEmbeddings } from '@langchain/openai';
-import { QdrantVectorStore } from '@langchain/qdrant';
+import { Milvus } from '@langchain/community/vectorstores/milvus';
 import OpenAI from 'openai';
 import rateLimit from 'express-rate-limit';
 import fs from 'fs';
@@ -18,18 +18,11 @@ const chatRateLimit = rateLimit({
 });
 
 const PORT = process.env.PORT || 8000;
-const CHAT_TIMEOUT_MS = process.env.CHAT_TIMEOUT_MS
-  ? parseInt(process.env.CHAT_TIMEOUT_MS)
-  : 120000; // 2 minutes
 
 // Ensure required environment variables are set
 if (!process.env.OPENAI_API_KEY) {
   throw new Error('Missing OPENAI_API_KEY in .env file');
 }
-
-const openAIClient = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 // OpenRouter client for multiple models
 const openRouterClient = new OpenAI({
@@ -45,6 +38,12 @@ const openRouterClient = new OpenAI({
 const AVAILABLE_MODELS = {
   'gpt-4o': {
     name: 'GPT-4o',
+    provider: 'openai',
+    cost: 'paid',
+    description: 'Most capable model, its context window: 128,000',
+  },
+  'gpt-4o-mini': {
+    name: 'GPT-4o-mini',
     provider: 'openai',
     cost: 'paid',
     description: 'Most capable model, its context window: 128,000',
@@ -212,38 +211,9 @@ app.post('/chat', chatRateLimit, async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'POST');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  let clientDisconnected = false;
-  const cleanup = () => {
-    clientDisconnected = true;
-  };
-
-  req.on('close', cleanup);
-  req.on('aborted', cleanup);
-
-  // Add timeout if it takes so long to complete the answer to prevent hanging connections if something goes wrong
-  const timeout = setTimeout(() => {
-    if (!clientDisconnected) {
-      console.log('Request timeout');
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'error',
-          error: 'Request timeout',
-        })}\n\n`,
-      );
-      res.end();
-    }
-  }, CHAT_TIMEOUT_MS);
-
   try {
     // Sanitize user input
     const sanitizedMessage = message.trim().substring(0, 4000);
-
-    console.log(
-      `Processing query with model ${model}: ${sanitizedMessage.substring(
-        0,
-        30,
-      )}...`,
-    );
 
     // RAG Logic with error handling
     let retrievedDocs = [];
@@ -253,13 +223,10 @@ app.post('/chat', chatRateLimit, async (req, res) => {
         apiKey: process.env.OPENAI_API_KEY,
       });
 
-      const vectorStore = await QdrantVectorStore.fromExistingCollection(
-        embeddings,
-        {
-          url: process.env.QDRANT_URL,
-          collectionName: process.env.QDRANT_COLLECTION_NAME,
-        },
-      );
+      const vectorStore = await Milvus.fromExistingCollection(embeddings, {
+        address: process.env.MILVUS_URL || 'localhost:19530',
+        collectionName: process.env.MILVUS_COLLECTION_NAME,
+      });
 
       // Vector retriever
       const retriever = vectorStore.asRetriever({
@@ -330,8 +297,6 @@ app.post('/chat', chatRateLimit, async (req, res) => {
     let fullResponse = '';
 
     for await (const chunk of chatResult) {
-      if (clientDisconnected) break;
-
       const content = chunk.choices[0]?.delta?.content;
       if (content) {
         fullResponse += content;
@@ -369,8 +334,6 @@ app.post('/chat', chatRateLimit, async (req, res) => {
       })}\n\n`,
     );
     res.end();
-  } finally {
-    clearTimeout(timeout);
   }
 });
 
