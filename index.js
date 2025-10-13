@@ -7,6 +7,7 @@ import { OpenAIEmbeddings } from '@langchain/openai';
 import { QdrantVectorStore } from '@langchain/qdrant';
 import OpenAI from 'openai';
 import rateLimit from 'express-rate-limit';
+import fs from 'fs';
 
 const chatRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -120,9 +121,15 @@ const fileUploadQueue = new Queue('file-upload-queue', {
   },
 });
 
+// Configure upload directory via environment variable and ensure it exists
+const UPLOAD_DIR = process.env.UPLOAD_DIR || 'uploads/'; // e.g: UPLOAD_DIR="/var/data/pdf-chat/uploads"
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/');
+    cb(null, UPLOAD_DIR);
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
