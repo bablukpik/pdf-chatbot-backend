@@ -1,6 +1,6 @@
 # PDF Chatbot Backend
 
-This is the Express.js backend for a scalable PDF chat RAG application. It uses LangChain for document processing and Qdrant for vector storage. The backend supports PDF upload, chunking, embedding, retrieval, and streaming chat responses.
+This is the Express.js backend for a scalable PDF chat RAG application. It uses LangChain for document processing and Milvus for vector storage. The backend supports PDF upload, chunking, embedding, retrieval, and streaming chat responses.
 
 **Frontend repo:** [pdf-chatbot-frontend](https://github.com/bablukpik/pdf-chatbot-frontend)
 
@@ -8,7 +8,7 @@ This is the Express.js backend for a scalable PDF chat RAG application. It uses 
 
 - AI-powered chat with PDF documents
 - Chunk and embed documents using LangChain
-- Store and retrieve embeddings with Qdrant vector database
+- Store and retrieve embeddings with Milvus vector database
 - Real-time streaming responses (SSE)
 - Queue-based processing with BullMQ
 - Rate limiting and input validation
@@ -20,7 +20,7 @@ This is the Express.js backend for a scalable PDF chat RAG application. It uses 
 - Node.js with Express
 - LangChain for RAG
 - OpenAI API
-- Qdrant Vector Database
+- Milvus Vector Database
 - Rate limiting with express-rate-limit
 - SSE
 - BullMQ
@@ -35,31 +35,31 @@ This is the Express.js backend for a scalable PDF chat RAG application. It uses 
 ## RAG Implementation
 
 - Uses OpenAI embeddings for document retrieval
-- Qdrant vector database for similarity search
+- Milvus vector database for similarity search
 - Context-aware responses with source citations
 
 ## Setup
 
 1. **Install dependencies:**
    ```sh
-   npm install
+   pnpm install
    ```
 2. **Copy and configure environment variables:**
    ```sh
    cp .env.example .env
    # Edit .env and add your OpenAI API key and other settings
    ```
-3. **Start Qdrant and Valkey (Redis alternative):**
+3. **Start Milvus and Valkey (Redis alternative):**
    ```sh
    docker compose up
    ```
 4. **Start the backend server:**
    ```sh
-   npm run dev
+   pnpm dev
    ```
 5. **Start the worker:**
    ```sh
-   npm run dev:worker
+   pnpm dev:worker
    ```
 
 ## Environment Variables
@@ -67,8 +67,8 @@ This is the Express.js backend for a scalable PDF chat RAG application. It uses 
 See `.env.example` for all required variables:
 
 - `OPENAI_API_KEY`: Your OpenAI API key
-- `QDRANT_URL`: Qdrant instance URL (e.g., http://localhost:6333)
-- `QDRANT_COLLECTION_NAME`: Name of the Qdrant collection
+- `MILVUS_URL`: Milvus instance URL (e.g., http://localhost:19530)
+- `MILVUS_COLLECTION_NAME`: Name of the Milvus collection
 - `REDIS_HOST`: Redis/Valkey host
 - `REDIS_PORT`: Redis/Valkey port
 
@@ -112,8 +112,8 @@ Chat with PDF documents using RAG.
 
 ## Worker
 
-- The worker processes uploaded PDFs, splits them, creates embeddings, and stores them in Qdrant.
-- Start the worker with `npm run dev:worker`.
+- The worker processes uploaded PDFs, splits them, creates embeddings, and stores them in Milvus.
+- Start the worker with `pnpm dev:worker`.
 
 ## Conversation History (Optional Advanced Feature)
 
@@ -130,7 +130,7 @@ By default, the LLM (like GPT-4, GPT-3.5, etc) does not remember previous chat m
 2. **When handling a chat request:**
    - Retrieve the conversation history for the user/session from the database (as an array of `{ role, content }` objects).
    - Append the latest user message if it is not already in the history.
-   - Retrieve context from Qdrant as usual.
+   - Retrieve context from Milvus as usual.
    - Build the `messages` array for the LLM as shown below.
 
 ### Example: Using Conversation History
@@ -308,3 +308,24 @@ If you'd like to discuss this project or collaborate:
 
 - Email: bablukpik@gmail.com
 - LinkedIn: https://www.linkedin.com/in/bablukpik/
+
+## Troubleshoot
+
+### Clean Up and Restart
+
+```bash
+# Stop all containers
+cd pdf-chatbot-backend
+docker compose down
+
+# Remove problematic volumes (this will delete all data)
+docker volume prune -f
+rm -rf volumes/
+
+# Recreate volumes with correct permissions
+mkdir -p volumes/minio volumes/etcd volumes/milvus
+chmod 755 volumes/minio volumes/etcd volumes/milvus
+
+# Start fresh
+docker compose up
+```

@@ -23,7 +23,7 @@ graph TD
     C --> D[Redis/Valkey Queue]
     D --> E[Background Worker]
     E --> F[PDF Processing Pipeline]
-    F --> G[Qdrant Vector Store]
+    F --> G[Milvus Vector Store]
     B --> H[Immediate Response: 'uploaded']
 
     F --> F1[PDF Loading]
@@ -48,7 +48,7 @@ Looking at the `worker.js` file, each PDF upload triggers several resource-inten
 - **PDF Loading**: Using `PDFLoader` to extract text from PDF files
 - **Text Splitting**: Breaking documents into chunks (1000 characters with 200 overlap)
 - **Embedding Generation**: Creating vector embeddings using OpenAI's API
-- **Vector Storage**: Storing embeddings in Qdrant vector database
+- **Vector Storage**: Storing embeddings in Milvus vector database
 
 ### 2. **Non-blocking User Experience**
 
@@ -260,7 +260,7 @@ The queue system prevents these issues by moving the heavy processing to backgro
 ### Prerequisites
 
 1. **Redis/Valkey Server**: Required for queue storage
-2. **Qdrant Vector Database**: Required for storing embeddings
+2. **Milvus Vector Database**: Required for storing embeddings
 3. **OpenAI API Key**: Required for embedding generation
 
 ### Environment Variables
@@ -276,8 +276,8 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 
 # Vector Database
-QDRANT_URL=http://localhost:6333
-QDRANT_COLLECTION_NAME=pdf_documents
+MILVUS_URL=http://localhost:19530
+MILVUS_COLLECTION_NAME=pdf_documents
 
 # Optional: OpenRouter for multiple models
 OPENROUTER_API_KEY=your_openrouter_key_here
@@ -293,7 +293,7 @@ CHAT_TIMEOUT_MS=120000
 #### 1. Start Infrastructure Services
 
 ```bash
-# Start Redis/Valkey and Qdrant using Docker Compose
+# Start Redis/Valkey and Milvus using Docker Compose
 docker compose up
 ```
 
@@ -477,34 +477,6 @@ fileProcessingWorker.on('failed', (job, err) => {
 });
 ```
 
-### Health Checks
-
-```javascript
-// Add to your application
-app.get('/health', async (req, res) => {
-  try {
-    // Check Redis connection
-    await fileUploadQueue.isPaused();
-
-    // Check Qdrant connection
-    const vectorStore = await QdrantVectorStore.fromExistingCollection(/*...*/);
-
-    res.json({
-      status: 'healthy',
-      queue: 'connected',
-      vectorStore: 'connected',
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'unhealthy',
-      error: error.message,
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
-```
-
 ## Production Considerations
 
 ### Scaling the Queue System
@@ -559,7 +531,7 @@ services:
 
 2. **Network Security**:
 
-   - Use VPN or private networks for Redis/Qdrant
+   - Use VPN or private networks for Redis/Milvus
    - Implement firewall rules
    - Use TLS for external connections
 
@@ -950,3 +922,60 @@ The queue system uses BullMQ job options to control retry behavior, memory manag
 2. **Debugging**: Higher `removeOnFail` = more failed jobs to investigate
 3. **Retry Logic**: More `attempts` = more resilience but longer recovery time
 4. **Backoff Strategy**: Exponential prevents system overload during outages
+
+## Common alternatives to BullMQ
+
+Yes. Common alternatives and when to choose them:
+
+- Amazon SQS (+ SNS, S3)
+
+  - Pros: fully managed, durable, simple retries/DLQs, scales easily
+  - Cons: cloud lock-in, eventual consistency, costs
+  - Use if you want zero-ops reliability
+
+- RabbitMQ (amqplib/rascal)
+
+  - Pros: mature, routing keys, exchanges, priorities, DLQs, ack/nack
+  - Cons: you operate it; more config than Redis queues
+  - Use if you need rich routing/topologies and strong delivery semantics
+
+- Kafka (kafkajs)
+
+  - Pros: high throughput, replay, partitioning, stream processing
+  - Cons: heavy operationally; overkill for task queues
+  - Use for event streams/analytics, not simple background jobs
+
+- NATS / NATS JetStream
+
+  - Pros: simple, fast, lightweight; JetStream adds persistence
+  - Cons: ecosystem smaller than RabbitMQ/Kafka
+  - Use for low-latency messaging with optional persistence
+
+- Redis Streams (ioredis XREADGROUP)
+
+  - Pros: stays in Redis; full control, no BullMQ abstraction
+  - Cons: you implement groups/retries/DLQ yourself
+  - Use if you want minimal deps and can own the mechanics
+
+- Bee-Queue
+
+  - Pros: simple, Redis-based like Bull
+  - Cons: largely superseded by BullMQ; fewer features
+  - Use only for legacy/simple cases
+
+- Agenda (MongoDB)
+  - Pros: cron-like jobs, Mongo-based persistence
+  - Cons: less suited for high-throughput worker queues
+  - Use for scheduled jobs if you already use Mongo
+
+Recommendation for your use case (PDF processing, retries, concurrency, simple ops):
+
+- Stick with BullMQ or move to SQS if you want managed durability and less ops.
+- Choose RabbitMQ if you need advanced routing, DLQs, and well-defined semantics.
+
+Migration scope (high-level):
+
+- Replace `Queue.add` and `Worker` with the new client’s producer/consumer APIs.
+- Re-implement: retries/backoff, progress reporting, job status endpoints, DLQ handling.
+- Update `docker-compose.yml` (RabbitMQ/Kafka) or infra (SQS creds).
+- Keep Multer/upload flow unchanged.
