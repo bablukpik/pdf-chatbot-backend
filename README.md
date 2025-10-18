@@ -78,12 +78,298 @@ See `.env.example` for all required variables:
 
 Upload a PDF file. The file will be processed and added to the vector store asynchronously.
 
-- **Body:** `multipart/form-data` with a `pdf` field
-- **Response:** `{ message: 'uploaded' }`
-
 ### `POST /chat`
 
-Chat with PDF documents using RAG.
+Chat with the AI using the uploaded PDF documents as context.
+
+### `GET /models`
+
+Get available AI models for chat.
+
+### `GET /upload/status/:jobId`
+
+Get the status of a PDF processing job.
+
+### `GET /upload/queue/stats`
+
+Get queue statistics (waiting, active, completed, failed jobs).
+
+## Collection Management Endpoints
+
+### `GET /collections`
+
+List all available collections in the Milvus database.
+
+**Response:**
+
+```json
+{
+  "collections": ["pdf_documents"],
+  "count": 1,
+  "currentCollection": "pdf_documents"
+}
+```
+
+### `GET /collections/:collectionName/stats`
+
+Get detailed statistics about a specific collection.
+
+**Response:**
+
+```json
+{
+  "collectionName": "pdf_documents",
+  "info": {
+    "name": "pdf_documents",
+    "description": "PDF document collection",
+    "fields": [...],
+    "shards": 1,
+    "consistencyLevel": "Strong"
+  },
+  "statistics": {
+    "rowCount": 150,
+    "dataSize": 1024000
+  },
+  "status": "active"
+}
+```
+
+### `DELETE /collections/:collectionName/vectors`
+
+Delete specific vectors from a collection using metadata filters.
+
+**Request Body:**
+
+```json
+{
+  "filter": {
+    "filename": "example.pdf"
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "message": "Vectors deleted successfully",
+  "collectionName": "pdf_documents",
+  "filter": {
+    "filename": "example.pdf"
+  },
+  "result": {...}
+}
+```
+
+### `DELETE /collections/:collectionName/vectors/all?confirm=true`
+
+Empty a collection by deleting all vectors but keeping the collection structure.
+
+**Response:**
+
+```json
+{
+  "message": "Collection emptied successfully",
+  "collectionName": "pdf_documents",
+  "result": {...}
+}
+```
+
+### `DELETE /collections/:collectionName?confirm=true`
+
+Completely drop (delete) an entire collection and all its vectors.
+
+**Response:**
+
+```json
+{
+  "message": "Collection dropped successfully",
+  "collectionName": "pdf_documents"
+}
+```
+
+## Partition Management Endpoints
+
+### `GET /collections/:collectionName/partitions`
+
+List all partitions in a collection.
+
+**Response:**
+
+```json
+{
+  "collectionName": "pdf_documents",
+  "partitions": ["_default", "partition1", "partition2"],
+  "count": 3
+}
+```
+
+### `GET /collections/:collectionName/partitions/:partitionName/stats`
+
+Get detailed statistics about a specific partition.
+
+**Response:**
+
+```json
+{
+  "collectionName": "pdf_documents",
+  "partitionName": "_default",
+  "rowCount": 75,
+  "dataSize": 512000
+}
+```
+
+### `POST /collections/:collectionName/partitions`
+
+Create a new partition in a collection.
+
+**Request Body:**
+
+```json
+{
+  "partitionName": "new_partition",
+  "description": "Optional description"
+}
+```
+
+**Response:**
+
+```json
+{
+  "message": "Partition created successfully",
+  "collectionName": "pdf_documents",
+  "partitionName": "new_partition",
+  "description": "Optional description"
+}
+```
+
+### `DELETE /collections/:collectionName/partitions/:partitionName/vectors?confirm=true`
+
+Empty a partition by deleting all vectors but keeping the partition structure.
+
+**Response:**
+
+```json
+{
+  "message": "Partition emptied successfully",
+  "collectionName": "pdf_documents",
+  "partitionName": "_default",
+  "result": {...}
+}
+```
+
+### `DELETE /collections/:collectionName/partitions/:partitionName?confirm=true`
+
+Completely drop (delete) a partition and all its vectors.
+
+**Response:**
+
+```json
+{
+  "message": "Partition dropped successfully",
+  "collectionName": "pdf_documents",
+  "partitionName": "old_partition"
+}
+```
+
+## Collection Management Guide
+
+### Using the CLI Tool
+
+A command-line tool is provided for advanced collection management:
+
+```bash
+# Collection operations
+node scripts/manage-collections.js list
+node scripts/manage-collections.js info pdf_documents
+node scripts/manage-collections.js count pdf_documents
+node scripts/manage-collections.js search pdf_documents "machine learning"
+node scripts/manage-collections.js empty pdf_documents
+node scripts/manage-collections.js drop pdf_documents
+
+# Partition operations
+node scripts/manage-collections.js partitions pdf_documents
+node scripts/manage-collections.js partition-info pdf_documents _default
+node scripts/manage-collections.js partition-count pdf_documents _default
+node scripts/manage-collections.js create-partition pdf_documents new_partition "My new partition"
+node scripts/manage-collections.js empty-partition pdf_documents _default
+node scripts/manage-collections.js drop-partition pdf_documents old_partition
+```
+
+### Using the API
+
+#### Delete Vectors by Filename
+
+To delete all vectors from a specific PDF file:
+
+```bash
+curl -X DELETE http://localhost:8000/collections/pdf_documents/vectors \
+  -H "Content-Type: application/json" \
+  -d '{"filter": {"filename": "example.pdf"}}'
+```
+
+#### Empty a Collection
+
+To delete all vectors but keep the collection:
+
+```bash
+curl -X DELETE "http://localhost:8000/collections/pdf_documents/vectors/all?confirm=true"
+```
+
+#### Drop a Collection
+
+To completely delete a collection:
+
+```bash
+curl -X DELETE "http://localhost:8000/collections/pdf_documents?confirm=true"
+```
+
+#### Partition Management
+
+**List partitions in a collection:**
+
+```bash
+curl -X GET "http://localhost:8000/collections/pdf_documents/partitions"
+```
+
+**Get partition statistics:**
+
+```bash
+curl -X GET "http://localhost:8000/collections/pdf_documents/partitions/_default/stats"
+```
+
+**Create a new partition:**
+
+```bash
+curl -X POST "http://localhost:8000/collections/pdf_documents/partitions" \
+  -H "Content-Type: application/json" \
+  -d '{"partitionName": "new_partition", "description": "My new partition"}'
+```
+
+**Empty a partition (delete all vectors):**
+
+```bash
+curl -X DELETE "http://localhost:8000/collections/pdf_documents/partitions/_default/vectors?confirm=true"
+```
+
+**Drop a partition:**
+
+```bash
+curl -X DELETE "http://localhost:8000/collections/pdf_documents/partitions/old_partition?confirm=true"
+```
+
+### Safety Features
+
+- All destructive operations require confirmation via query parameters
+- Collection and partition deletion is irreversible
+- Vector deletion by filter is precise and safe
+- CLI tool provides warnings before destructive operations
+
+## Additional Features
+
+### Chat with PDF Documents
+
+The system uses RAG (Retrieval-Augmented Generation) to chat with uploaded PDF documents.
 
 **Request Body:**
 
@@ -298,17 +584,6 @@ Simply context window means LLM's input and output data/token processing capabil
 
 **Tip:** Use tools like [OpenAI's tokenizer](https://platform.openai.com/tokenizer) to estimate token counts for your prompts.
 
-## License
-
-MIT
-
-## Contact
-
-If you'd like to discuss this project or collaborate:
-
-- Email: bablukpik@gmail.com
-- LinkedIn: https://www.linkedin.com/in/bablukpik/
-
 ## Troubleshoot
 
 ### Clean Up and Restart
@@ -329,3 +604,14 @@ chmod 755 volumes/minio volumes/etcd volumes/milvus
 # Start fresh
 docker compose up
 ```
+
+## Contact
+
+If you'd like to discuss this project or collaborate:
+
+- Email: bablukpik@gmail.com
+- LinkedIn: https://www.linkedin.com/in/bablukpik/
+
+## License
+
+MIT

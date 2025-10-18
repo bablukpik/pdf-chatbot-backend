@@ -8,6 +8,7 @@ import { Milvus } from '@langchain/community/vectorstores/milvus';
 import OpenAI from 'openai';
 import rateLimit from 'express-rate-limit';
 import fs from 'fs';
+import MilvusManager from './utils/milvus-manager.js';
 
 const chatRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -323,6 +324,329 @@ app.get('/upload/queue/stats', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Add endpoint to list collections
+app.get('/collections', async (req, res) => {
+  try {
+    const manager = new MilvusManager();
+    const result = await manager.listCollections();
+    await manager.close();
+
+    if (result.success) {
+      res.json({
+        collections: result.collections,
+        count: result.count,
+        currentCollection: process.env.MILVUS_COLLECTION_NAME,
+      });
+    } else {
+      res.status(500).json({ error: result.error });
+    }
+  } catch (error) {
+    console.error('Error listing collections:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add endpoint to get collection statistics
+app.get('/collections/:collectionName/stats', async (req, res) => {
+  try {
+    const { collectionName } = req.params;
+    const manager = new MilvusManager();
+
+    const result = await manager.getCollectionInfo(collectionName);
+    await manager.close();
+
+    if (result.success) {
+      res.json({
+        collectionName: result.collectionName,
+        info: result.info,
+        statistics: result.statistics,
+        status: 'active',
+      });
+    } else {
+      res.status(404).json({ error: result.error });
+    }
+  } catch (error) {
+    console.error('Error getting collection stats:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add endpoint to delete specific vectors by metadata
+app.delete('/collections/:collectionName/vectors', async (req, res) => {
+  try {
+    const { collectionName } = req.params;
+    const { filter } = req.body; // e.g., { filename: "example.pdf" }
+
+    if (!filter) {
+      return res.status(400).json({
+        error:
+          'Filter is required. Provide metadata filter to identify vectors to delete.',
+        example: { filename: 'example.pdf' },
+      });
+    }
+
+    const manager = new MilvusManager();
+    const result = await manager.deleteVectorsByFilter(collectionName, filter);
+    await manager.close();
+
+    if (result.success) {
+      res.json({
+        message: 'Vectors deleted successfully',
+        collectionName,
+        filter,
+        result: result.result,
+      });
+    } else {
+      res.status(500).json({ error: result.error });
+    }
+  } catch (error) {
+    console.error('Error deleting vectors:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add endpoint to delete entire collection
+app.delete('/collections/:collectionName', async (req, res) => {
+  try {
+    const { collectionName } = req.params;
+    const { confirm } = req.query;
+
+    if (confirm !== 'true') {
+      return res.status(400).json({
+        error: 'Collection deletion requires confirmation',
+        message: 'Add ?confirm=true to the URL to confirm deletion',
+        warning:
+          'This action will permanently delete the entire collection and all vectors',
+      });
+    }
+
+    const manager = new MilvusManager();
+    const result = await manager.dropCollection(collectionName, true);
+    await manager.close();
+
+    if (result.success) {
+      res.json({
+        message: 'Collection dropped successfully',
+        collectionName,
+      });
+    } else {
+      res.status(500).json({ error: result.error });
+    }
+  } catch (error) {
+    console.error('Error deleting collection:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add endpoint to empty collection (delete all vectors but keep collection)
+app.delete('/collections/:collectionName/vectors/all', async (req, res) => {
+  try {
+    const { collectionName } = req.params;
+    const { confirm } = req.query;
+
+    if (confirm !== 'true') {
+      return res.status(400).json({
+        error: 'Collection emptying requires confirmation',
+        message: 'Add ?confirm=true to the URL to confirm emptying',
+        warning: 'This action will delete all vectors in the collection',
+      });
+    }
+
+    const manager = new MilvusManager();
+    const result = await manager.emptyCollection(collectionName);
+    await manager.close();
+
+    if (result.success) {
+      res.json({
+        message: 'Collection emptied successfully',
+        collectionName,
+        result: result.result,
+      });
+    } else {
+      res.status(500).json({ error: result.error });
+    }
+  } catch (error) {
+    console.error('Error emptying collection:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Partition Management Endpoints
+
+// Add endpoint to list partitions in a collection
+app.get('/collections/:collectionName/partitions', async (req, res) => {
+  try {
+    const { collectionName } = req.params;
+    const manager = new MilvusManager();
+    const result = await manager.listPartitions(collectionName);
+    await manager.close();
+
+    if (result.success) {
+      res.json({
+        collectionName: result.collectionName,
+        partitions: result.partitions,
+        count: result.count,
+      });
+    } else {
+      res.status(500).json({ error: result.error });
+    }
+  } catch (error) {
+    console.error('Error listing partitions:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add endpoint to get partition statistics
+app.get(
+  '/collections/:collectionName/partitions/:partitionName/stats',
+  async (req, res) => {
+    try {
+      const { collectionName, partitionName } = req.params;
+      const manager = new MilvusManager();
+      const result = await manager.getPartitionStats(
+        collectionName,
+        partitionName,
+      );
+      await manager.close();
+
+      if (result.success) {
+        res.json({
+          collectionName: result.collectionName,
+          partitionName: result.partitionName,
+          rowCount: result.rowCount,
+          dataSize: result.dataSize,
+        });
+      } else {
+        res.status(404).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error('Error getting partition stats:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+// Add endpoint to create a new partition
+app.post('/collections/:collectionName/partitions', async (req, res) => {
+  try {
+    const { collectionName } = req.params;
+    const { partitionName, description = '' } = req.body;
+
+    if (!partitionName) {
+      return res.status(400).json({
+        error: 'Partition name is required',
+        example: {
+          partitionName: 'new_partition',
+          description: 'Optional description',
+        },
+      });
+    }
+
+    const manager = new MilvusManager();
+    const result = await manager.createPartition(
+      collectionName,
+      partitionName,
+      description,
+    );
+    await manager.close();
+
+    if (result.success) {
+      res.json({
+        message: 'Partition created successfully',
+        collectionName: result.collectionName,
+        partitionName: result.partitionName,
+        description: result.description,
+      });
+    } else {
+      res.status(500).json({ error: result.error });
+    }
+  } catch (error) {
+    console.error('Error creating partition:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add endpoint to empty a partition (delete all vectors but keep partition)
+app.delete(
+  '/collections/:collectionName/partitions/:partitionName/vectors',
+  async (req, res) => {
+    try {
+      const { collectionName, partitionName } = req.params;
+      const { confirm } = req.query;
+
+      if (confirm !== 'true') {
+        return res.status(400).json({
+          error: 'Partition emptying requires confirmation',
+          message: 'Add ?confirm=true to the URL to confirm emptying',
+          warning: 'This action will delete all vectors in the partition',
+        });
+      }
+
+      const manager = new MilvusManager();
+      const result = await manager.emptyPartition(
+        collectionName,
+        partitionName,
+      );
+      await manager.close();
+
+      if (result.success) {
+        res.json({
+          message: 'Partition emptied successfully',
+          collectionName: result.collectionName,
+          partitionName: result.partitionName,
+          result: result.result,
+        });
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error('Error emptying partition:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+// Add endpoint to drop a partition
+app.delete(
+  '/collections/:collectionName/partitions/:partitionName',
+  async (req, res) => {
+    try {
+      const { collectionName, partitionName } = req.params;
+      const { confirm } = req.query;
+
+      if (confirm !== 'true') {
+        return res.status(400).json({
+          error: 'Partition deletion requires confirmation',
+          message: 'Add ?confirm=true to the URL to confirm deletion',
+          warning:
+            'This action will permanently delete the partition and all its vectors',
+        });
+      }
+
+      const manager = new MilvusManager();
+      const result = await manager.dropPartition(
+        collectionName,
+        partitionName,
+        true,
+      );
+      await manager.close();
+
+      if (result.success) {
+        res.json({
+          message: 'Partition dropped successfully',
+          collectionName: result.collectionName,
+          partitionName: result.partitionName,
+        });
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error('Error dropping partition:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
