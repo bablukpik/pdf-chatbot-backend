@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { Worker } from 'bullmq';
 import { OpenAIEmbeddings } from '@langchain/openai';
-import { QdrantVectorStore } from '@langchain/qdrant';
+import { Milvus } from '@langchain/community/vectorstores/milvus';
 import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import fs from 'fs/promises';
@@ -9,11 +9,11 @@ import fs from 'fs/promises';
 // Ensure required environment variables are set
 if (
   !process.env.OPENAI_API_KEY ||
-  !process.env.QDRANT_URL ||
-  !process.env.QDRANT_COLLECTION_NAME
+  !process.env.MILVUS_URL ||
+  !process.env.MILVUS_COLLECTION_NAME
 ) {
   throw new Error(
-    'Missing required environment variables for worker (OPENAI_API_KEY, QDRANT_URL, QDRANT_COLLECTION_NAME)',
+    'Missing required environment variables for worker (OPENAI_API_KEY, MILVUS_URL, MILVUS_COLLECTION_NAME)',
   );
 }
 
@@ -58,18 +58,26 @@ const fileProcessingWorker = new Worker(
       });
 
       // 4. Get the vector store instance
-      const vectorStore = new QdrantVectorStore(embeddings, {
-        url: process.env.QDRANT_URL,
-        collectionName: process.env.QDRANT_COLLECTION_NAME,
-      });
+      // const vectorStore = await Milvus.fromExistingCollection(embeddings, {
+      //   address: process.env.MILVUS_URL,
+      //   collectionName: process.env.MILVUS_COLLECTION_NAME,
+      // });
 
       // Update progress: 70% - Starting vectorization
       await job.updateProgress(70);
 
+      // 4. Create or connect to Milvus collection
+      // Use correct parameter names and configuration
+      const vectorStore = await Milvus.fromDocuments(chunks, embeddings, {
+        // url: process.env.MILVUS_URL, // Optional but MILVUS_URL must be in the .env file
+        collectionName: process.env.MILVUS_COLLECTION_NAME,
+      });
+
       // 5. Add the document chunks to the vector store
-      await vectorStore.addDocuments(chunks);
+      // await vectorStore.addDocuments(chunks); // no need addDocuments since fromDocuments does both create and save
+
       console.log(
-        `[${job.id}] Successfully added ${chunks.length} chunks to Qdrant for file: ${filename}`,
+        `[${job.id}] Successfully added ${chunks.length} chunks to Milvus collection "${process.env.MILVUS_COLLECTION_NAME}" for file: ${filename}`,
       );
 
       // Update progress: 100% - Complete
@@ -79,6 +87,7 @@ const fileProcessingWorker = new Worker(
         filename,
         chunksProcessed: chunks.length,
         pagesProcessed: loadedDocs.length,
+        collectionName: process.env.MILVUS_COLLECTION_NAME,
         processedAt: new Date().toISOString(),
       };
     } catch (error) {
@@ -103,7 +112,7 @@ const fileProcessingWorker = new Worker(
     }
   },
   {
-    concurrency, // Set a reasonable concurrency level
+    concurrency,
     connection: {
       host: process.env.REDIS_HOST || 'localhost',
       port: parseInt(process.env.REDIS_PORT || '6379', 10),

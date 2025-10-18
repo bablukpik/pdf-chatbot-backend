@@ -17,6 +17,7 @@
     "@langchain/openai": "^0.5.5",
     "@langchain/qdrant": "^0.1.2",
     "@langchain/textsplitters": "^0.1.0",
+    "@zilliz/milvus2-sdk-node": "^2.6.1",
     "bullmq": "^5.49.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
