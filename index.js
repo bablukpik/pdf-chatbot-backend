@@ -3,9 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { Queue } from 'bullmq';
-import { OpenAIEmbeddings } from '@langchain/openai';
+import { OpenAIEmbeddings, ChatOpenAI } from '@langchain/openai';
 import { Milvus } from '@langchain/community/vectorstores/milvus';
-import OpenAI from 'openai';
 import rateLimit from 'express-rate-limit';
 import fs from 'fs';
 import MilvusManager from './utils/milvus-manager.js';
@@ -43,8 +42,15 @@ const AVAILABLE_MODELS = {
 
 const DEFAULT_MODEL = 'gpt-4o-mini';
 
-// OpenRouter client for multiple models
-const openRouterClient = new OpenAI();
+// Function to get ChatOpenAI model based on selection
+function getChatModel(modelName = DEFAULT_MODEL) {
+  return new ChatOpenAI({
+    modelName: modelName,
+    temperature: 0.7,
+    maxTokens: 1000,
+    streaming: true,
+  });
+}
 
 const fileUploadQueue = new Queue('file-upload-queue', {
   connection: {
@@ -218,19 +224,14 @@ app.post('/chat', chatRateLimit, async (req, res) => {
       { role: 'user', content: sanitizedMessage },
     ];
 
-    // Use OpenRouter for dynamic model selection
-    const chatResult = await openRouterClient.chat.completions.create({
-      model,
-      messages,
-      stream: true,
-      max_tokens: 1000,
-      temperature: 0.7,
-    });
+    // Use ChatOpenAI for dynamic model selection
+    const chatModel = getChatModel(model);
+    const chatResult = await chatModel.stream(messages);
 
     let fullResponse = '';
 
     for await (const chunk of chatResult) {
-      const content = chunk.choices[0]?.delta?.content;
+      const content = chunk.content;
       if (content) {
         fullResponse += content;
         // Stream each chunk to client
